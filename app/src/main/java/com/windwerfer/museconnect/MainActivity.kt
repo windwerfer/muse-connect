@@ -25,6 +25,11 @@ import com.windwerfer.museconnect.Constants.REQUEST_ENABLE_BT
 import com.windwerfer.museconnect.Constants.REQUEST_PERMISSION_BLUETOOTH
 import com.windwerfer.museconnect.Constants.SCAN_PERIOD
 
+
+
+// https://medium.com/@martijn.van.welie/making-android-ble-work-part-1-a736dcd53b02
+// https://medium.com/@martijn.van.welie/making-android-ble-work-part-2-47a3cdaade07
+
 class MainActivity : AppCompatActivity() {
 
 
@@ -336,6 +341,7 @@ class MainActivity : AppCompatActivity() {
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
+            Log.d("yyy","ll")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 val data = characteristic.getStringValue(0)
                 runOnUiThread {
@@ -346,6 +352,7 @@ class MainActivity : AppCompatActivity() {
 
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            Log.d("yyy","dddd")
             val data = characteristic.getStringValue(0)
             runOnUiThread {
                 appendData("Notification: $data")
@@ -406,7 +413,7 @@ class MainActivity : AppCompatActivity() {
 
     // Find and set the characteristic
     private fun findAndSetCharacteristic(gatt: BluetoothGatt) {
-        val service = gatt.getService(Constants.MUSE_GATT_ATTR_SERVICECHANGED)
+        val service = gatt.getService(UUID.fromString("0000fe8d-0000-1000-8000-00805f9b34fb"))
         if (service != null) {
             val characteristic = service.getCharacteristic(Constants.MUSE_GATT_ATTR_TP9)
             if (characteristic != null) {
@@ -423,10 +430,13 @@ class MainActivity : AppCompatActivity() {
                         return
                     }
                 }
-
+                writeCommandToCharacteristic(characteristic, "s")
                 gatt.readCharacteristic(characteristic)
                 // Enable notifications
+                writeCommandToCharacteristic(characteristic, "s")
                 setCharacteristicNotification(characteristic, true)
+                val s = writeCommandToCharacteristic(characteristic, "s")
+                Log.d("xxx initBT", s.toString())
             } else {
                 runOnUiThread {
                     Toast.makeText(this, "Characteristic not found", Toast.LENGTH_SHORT).show()
@@ -454,8 +464,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         bluetoothGatt?.setCharacteristicNotification(characteristic, enabled)
-//        val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-        val descriptor = characteristic.getDescriptor(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
+        val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+//        val descriptor = characteristic.getDescriptor(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
         descriptor?.let {
             it.value = if (enabled) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
             bluetoothGatt?.writeDescriptor(it)

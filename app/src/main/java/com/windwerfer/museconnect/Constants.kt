@@ -41,5 +41,5 @@ object Constants {
 
 
     //        const val REQUEST_ENABLE_BT = 1
-    const val REQUEST_PERMISSION_BLUETOOTH = 2 // Add this line
+    const val REQUEST_PERMISSION_BLUETOOTH = 3 // 2 // Add this line
 }
