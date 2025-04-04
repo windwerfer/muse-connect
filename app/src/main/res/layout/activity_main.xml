@@ -49,6 +49,7 @@
             android:layout_height="wrap_content"
             android:padding="16dp"
             android:text="Data will appear here"
-            android:textSize="18sp" />
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
     </ScrollView>
 </LinearLayout>
