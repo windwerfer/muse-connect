@@ -1,280 +1,33 @@
 package com.windwerfer.museconnect
 
 import android.Manifest
-import android.app.Activity
-import android.bluetooth.*
-import android.bluetooth.le.BluetoothLeScanner
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanResult
-import android.content.ClipData
-import android.content.Context
-import android.content.Intent
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothGattService
+import android.bluetooth.BluetoothProfile
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import android.view.GestureDetector
-import android.content.ClipboardManager
-import android.view.MotionEvent
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.Spinner
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.util.UUID
 
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothAdapter
-
-
 class MainActivity : AppCompatActivity() {
-
-    private lateinit var bluetoothAdapter: BluetoothAdapter
-    private var bluetoothLeScanner: BluetoothLeScanner? = null
     private var bluetoothGatt: BluetoothGatt? = null
+    private lateinit var dataTextView: TextView
 
-    private lateinit var textViewData: TextView
-    private lateinit var buttonScan: Button
-    private lateinit var buttonConnect: Button
-    private lateinit var spinnerDevices: Spinner
+    // Subscription chaining state
+    private var currentSubscriptionIndex = 0
+    private lateinit var eegChannels: List<UUID>
+    private var subscriptionGatt: BluetoothGatt? = null
+    private var subscriptionService: BluetoothGattService? = null
 
-    private lateinit var spinnerAdapter: ArrayAdapter<String>
-    private val deviceList = mutableListOf<BluetoothDevice>()
-    private val deviceMap = mutableMapOf<String, BluetoothDevice>()
-
-    private var scanning = false
-    private var scanCallback: ScanCallback? = null
-    private val handler = Handler(Looper.getMainLooper())
-
-    private val bluetoothPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        arrayOf(
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_SCAN
-        )
-    } else {
-        arrayOf(
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        textViewData = findViewById(R.id.textViewData)
-        buttonScan = findViewById(R.id.buttonScan)
-        buttonConnect = findViewById(R.id.buttonConnect)
-        spinnerDevices = findViewById(R.id.spinnerDevices)
-
-        // Make TextView selectable and set up double-tap listener
-
-// Set up GestureDetector for double-tap
-        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                Log.d("xxx", "Double-tap detected")
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("Muse Data", textViewData.text)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(this@MainActivity, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                return true
-            }
-        })
-
-        // Set touch listener on TextView
-        textViewData.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
-            false // Allow ScrollView to handle scrolling
-        }
-
-        spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, mutableListOf())
-        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        spinnerDevices.adapter = spinnerAdapter
-
-        buttonScan.setOnClickListener { startBleScan() }
-        buttonConnect.setOnClickListener { connectToSelectedDevice() }
-
-        Log.d("xxx", "onCreate")
-        requestPermissions()
-        Log.d("xxx", "requestPermissions")
-        initializeBluetooth()
-        Log.d("xxx", "initializeBluetooth")
-        startBleScan()
-        Log.d("xxx", "first scanBT started")
-    }
-
-    private fun requestPermissions() {
-        val permissions = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
-            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-
-        val missingPermissions = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (missingPermissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), Constants.PERMISSION_REQUEST_CODE)
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            Constants.REQUEST_PERMISSION_BLUETOOTH -> {
-                if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                    Log.d("xxx initBT", "All Bluetooth permissions granted")
-                } else {
-                    Log.d("xxx initBT", "Bluetooth permissions not granted")
-                    appendData("Permissions denied. Cannot proceed.")
-                }
-            }
-        }
-    }
-
-    private fun initializeBluetooth() {
-        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bluetoothAdapter = bluetoothManager.adapter
-
-        if (bluetoothAdapter == null) {
-            Log.d("xxx initBT", "Bluetooth not supported")
-            appendData("Bluetooth not supported.")
-            finish()
-            return
-        }
-
-        if (!bluetoothAdapter.isEnabled) {
-            if (checkBluetoothPermissions()) {
-                try {
-                    val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                    startActivityForResult(enableBtIntent, Constants.REQUEST_ENABLE_BT)
-                    Log.d("xxx initBT", "Requesting Bluetooth enable")
-                } catch (e: SecurityException) {
-                    appendData("SecurityException: Missing permissions to enable Bluetooth.")
-                }
-            }
-        } else {
-            Log.d("xxx initBT", "Bluetooth already enabled")
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == Constants.REQUEST_ENABLE_BT) {
-            if (resultCode != Activity.RESULT_OK) {
-                Toast.makeText(this, "Bluetooth must be enabled to use this app", Toast.LENGTH_SHORT).show()
-                finish()
-            }
-        }
-    }
-
-    private fun startBleScan() {
-        if (!checkBluetoothPermissions()) return
-
-        Log.d("xxx scanBT", "scan start")
-        if (!bluetoothAdapter.isEnabled) {
-            Toast.makeText(this, "Bluetooth is not enabled", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
-        deviceList.clear()
-        deviceMap.clear()
-        spinnerAdapter.clear()
-
-        scanCallback = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val device = result.device
-                try {
-                    val deviceName = device.name ?: "Unknown"
-                    val deviceAddress = device.address
-                    val displayName = "$deviceName - $deviceAddress"
-
-                    if (deviceName.startsWith("muse", ignoreCase = true) && !deviceMap.containsKey(deviceAddress)) {
-                        deviceList.add(device)
-                        deviceMap[deviceAddress] = device
-                        runOnUiThread {
-                            spinnerAdapter.add(displayName)
-                            appendData("Found: $displayName")
-                        }
-                    }
-                } catch (e: SecurityException) {
-                    appendData("SecurityException: Cannot access device name.")
-                }
-            }
-
-            override fun onScanFailed(errorCode: Int) {
-                Toast.makeText(this@MainActivity, "Scan failed with error: $errorCode", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        try {
-            bluetoothLeScanner?.startScan(scanCallback)
-            scanning = true
-            Toast.makeText(this, "Scanning for devices...", Toast.LENGTH_SHORT).show()
-            handler.postDelayed({
-                if (scanning) {
-                    if (checkBluetoothPermissions()) {
-                        try {
-                            bluetoothLeScanner?.stopScan(scanCallback)
-                            scanning = false
-                            Toast.makeText(this, "Scan complete", Toast.LENGTH_SHORT).show()
-                        } catch (e: SecurityException) {
-                            appendData("SecurityException: Missing permissions to stop scan.")
-                        }
-                    }
-                }
-            }, Constants.SCAN_PERIOD)
-        } catch (e: SecurityException) {
-            appendData("SecurityException: Missing permissions for scanning.")
-        }
-    }
-
-    private fun connectToSelectedDevice() {
-        if (!checkBluetoothPermissions()) return
-
-        val selectedPosition = spinnerDevices.selectedItemPosition
-        if (selectedPosition in deviceList.indices) {
-            val device = deviceList[selectedPosition]
-            Log.d("xxx connBT", "connBT: $device")
-            connectToDevice(device)
-        } else {
-            Toast.makeText(this, "No device selected", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun connectToDevice(device: BluetoothDevice) {
-        if (!checkBluetoothPermissions()) return
-
-        try {
-            bluetoothGatt?.close()
-            bluetoothGatt = null
-        } catch (e: SecurityException) {
-            appendData("SecurityException: Missing permissions to close GATT.")
-        }
-
-        try {
-            bluetoothGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-            } else {
-                device.connectGatt(this, false, gattCallback)
-            }
-            Toast.makeText(this, "Connecting to ${device.name}", Toast.LENGTH_SHORT).show()
-        } catch (e: SecurityException) {
-            appendData("SecurityException: Missing permissions for GATT connection.")
-        }
-    }
-
-    private var gattCallback = object : BluetoothGattCallback() {
+    private val gattCallback: BluetoothGattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             appendData("Connection state: status=$status, newState=$newState")
             when (newState) {
@@ -282,16 +35,10 @@ class MainActivity : AppCompatActivity() {
                     if (checkBluetoothPermissions()) {
                         try {
                             appendData("Connected to ${gatt.device.name}")
-                            if (gatt.discoverServices()) {
-                                appendData("Service discovery initiated")
-                            } else {
-                                appendData("Failed to initiate service discovery")
-                            }
+                            if (gatt.discoverServices()) appendData("Service discovery initiated")
                         } catch (e: SecurityException) {
                             appendData("SecurityException: Cannot access device name or discover services")
                         }
-                    } else {
-                        appendData("Missing Bluetooth permissions for connection handling")
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -301,8 +48,6 @@ class MainActivity : AppCompatActivity() {
                         } catch (e: SecurityException) {
                             appendData("SecurityException: Cannot access device name")
                         }
-                    } else {
-                        appendData("Disconnected (permissions missing)")
                     }
                 }
             }
@@ -313,15 +58,11 @@ class MainActivity : AppCompatActivity() {
                 appendData("Services discovered.")
                 if (checkBluetoothPermissions()) {
                     try {
-                        gatt.services.forEach { service ->
-                            appendData("Found service: ${service.uuid}")
-                        }
+                        gatt.services.forEach { service -> appendData("Found service: ${service.uuid}") }
                         startEegStream(gatt)
                     } catch (e: SecurityException) {
                         appendData("SecurityException: Cannot access services")
                     }
-                } else {
-                    appendData("Missing permissions for service discovery")
                 }
             }
         }
@@ -345,8 +86,6 @@ class MainActivity : AppCompatActivity() {
                             } catch (e: SecurityException) {
                                 appendData("SecurityException: Failed to write 'd'")
                             }
-                        } else {
-                            appendData("Missing permissions to write 'd'")
                         }
                     }
                     "2, 100, 10" -> { // "d\n"
@@ -354,12 +93,22 @@ class MainActivity : AppCompatActivity() {
                             try {
                                 val service = gatt.getService(Constants.MUSE_SERVICE_UUID)
                                 subscribeToEegChannels(gatt, service)
+                                // Write status command after starting stream
+                                characteristic.value = byteArrayOf(0x02, 0x73, 0x0a) // "s\n"
+                                val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    gatt.writeCharacteristic(characteristic, characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    if (gatt.writeCharacteristic(characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                                }
+                                appendData("Initiated write for 's': result=$writeResult")
                             } catch (e: SecurityException) {
-                                appendData("SecurityException: Failed to access service for subscriptions")
+                                appendData("SecurityException: Failed to access service or write 's'")
                             }
-                        } else {
-                            appendData("Missing permissions for EEG subscriptions")
                         }
+                    }
+                    "2, 115, 10" -> { // "s\n"
+                        appendData("Status command acknowledged")
                     }
                 }
             }
@@ -367,9 +116,14 @@ class MainActivity : AppCompatActivity() {
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                currentSubscriptionIndex++
+                subscribeNextChannel()
+            }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            appendData("onCharacteristicChanged triggered for ${characteristic.uuid}")
             val data = characteristic.value
             val channel = when (characteristic.uuid) {
                 Constants.MUSE_GATT_ATTR_STREAM_TOGGLE -> "Control"
@@ -383,58 +137,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun subscribeToEegChannels(gatt: BluetoothGatt, service: BluetoothGattService) {
-        if (!checkBluetoothPermissions()) {
-            appendData("Missing Bluetooth permissions for EEG subscriptions")
-            return
-        }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        dataTextView = findViewById(R.id.dataTextView)
 
-        val channels = listOf(
-            Constants.MUSE_GATT_ATTR_TP9,
-            Constants.MUSE_GATT_ATTR_AF7,
-            Constants.MUSE_GATT_ATTR_AF8,
-            Constants.MUSE_GATT_ATTR_TP10
-        )
-        var currentIndex = 0
+        val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+        val device = bluetoothAdapter?.getRemoteDevice("00:55:DA:B9:59:09") // MuseS-5909 MAC
+        device?.let {
+            connectToDevice(it)
+        } ?: appendData("No Bluetooth device found.")
+    }
 
-        fun subscribeNext() {
-            if (currentIndex >= channels.size) return
-            val uuid = channels[currentIndex]
-            val char = service.getCharacteristic(uuid)
-            char?.let {
-                try {
-                    if (gatt.setCharacteristicNotification(it, true)) {
-                        appendData("Enabled notification for $uuid")
-                        val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-                        descriptor?.let { desc ->
-                            desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            if (gatt.writeDescriptor(desc)) {
-                                appendData("Initiated subscription for $uuid")
-                            } else {
-                                appendData("Failed to initiate subscription for $uuid")
-                            }
-                        } ?: appendData("Descriptor not found for $uuid")
-                    } else {
-                        appendData("Failed to enable notification for $uuid")
-                    }
-                } catch (e: SecurityException) {
-                    appendData("SecurityException: Failed to subscribe to $uuid")
-                }
-            } ?: appendData("EEG characteristic $uuid not found.")
-        }
-
-        subscribeNext() // Start with the first channel
-
-        // Update gattCallback to handle chaining
-        this@MainActivity.gattCallback = object : BluetoothGattCallback() {
-            // ... other overrides unchanged ...
-            override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    currentIndex++
-                    subscribeNext()
-                }
+    private fun connectToDevice(device: BluetoothDevice) {
+        if (checkBluetoothPermissions()) {
+            try {
+                bluetoothGatt = device.connectGatt(this, false, gattCallback)
+                appendData("Connecting to ${device.name} - ${device.address}")
+            } catch (e: SecurityException) {
+                appendData("SecurityException: Failed to connect to device")
             }
+        } else {
+            appendData("Missing Bluetooth permissions for connection")
+            // Request permissions here if needed
         }
     }
 
@@ -456,7 +181,19 @@ class MainActivity : AppCompatActivity() {
 
             val controlChar = service.getCharacteristic(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
             controlChar?.let {
-                it.value = byteArrayOf(0x03, 0x70, 0x32, 0x31, 0x0a) // "p21\n"
+                if (gatt.setCharacteristicNotification(it, true)) {
+                    appendData("Enabled notification for control ${it.uuid}")
+                    val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                    descriptor?.let { desc ->
+                        desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        if (gatt.writeDescriptor(desc)) {
+                            appendData("Subscribed to control channel ${it.uuid}")
+                        } else {
+                            appendData("Failed to subscribe to control ${it.uuid}")
+                        }
+                    }
+                }
+                it.value = byteArrayOf(0x03, 0x70, 0x35, 0x31, 0x0a) // "p21\n"
                 val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     gatt.writeCharacteristic(it, it.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                 } else {
@@ -464,41 +201,70 @@ class MainActivity : AppCompatActivity() {
                     if (gatt.writeCharacteristic(it)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
                 }
                 appendData("Initiated write for 'p21': result=$writeResult")
-                // Next steps (d, subscriptions) moved to onCharacteristicWrite
             } ?: appendData("Control characteristic not found.")
         } catch (e: SecurityException) {
             appendData("SecurityException: Missing permissions.")
         }
     }
 
-    private fun checkBluetoothPermissions(): Boolean {
-        val missingPermissions = bluetoothPermissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missingPermissions.isNotEmpty()) {
-            appendData("Missing permissions: $missingPermissions")
-            ActivityCompat.requestPermissions(
-                this,
-                missingPermissions.toTypedArray(),
-                Constants.REQUEST_PERMISSION_BLUETOOTH
-            )
-            return false
-        }
-        return true
+    private fun subscribeNextChannel() {
+        if (currentSubscriptionIndex >= eegChannels.size) return
+        val gatt = subscriptionGatt ?: return
+        val service = subscriptionService ?: return
+        val uuid = eegChannels[currentSubscriptionIndex]
+        val char = service.getCharacteristic(uuid)
+        char?.let {
+            try {
+                if (gatt.setCharacteristicNotification(it, true)) {
+                    appendData("Enabled notification for $uuid")
+                    val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                    descriptor?.let { desc ->
+                        desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        if (gatt.writeDescriptor(desc)) {
+                            appendData("Initiated subscription for $uuid")
+                        } else {
+                            appendData("Failed to initiate subscription for $uuid")
+                        }
+                    } ?: appendData("Descriptor not found for $uuid")
+                } else {
+                    appendData("Failed to enable notification for $uuid")
+                }
+            } catch (e: SecurityException) {
+                appendData("SecurityException: Failed to subscribe to $uuid")
+            }
+        } ?: appendData("EEG characteristic $uuid not found.")
     }
 
-    private fun appendData(data: String) {
+    private fun subscribeToEegChannels(gatt: BluetoothGatt, service: BluetoothGattService) {
+        if (!checkBluetoothPermissions()) {
+            appendData("Missing Bluetooth permissions for EEG subscriptions")
+            return
+        }
+        eegChannels = listOf(
+            Constants.MUSE_GATT_ATTR_TP9,
+            Constants.MUSE_GATT_ATTR_AF7,
+            Constants.MUSE_GATT_ATTR_AF8,
+            Constants.MUSE_GATT_ATTR_TP10
+        )
+        currentSubscriptionIndex = 0
+        subscriptionGatt = gatt
+        subscriptionService = service
+        subscribeNextChannel()
+    }
+
+    private fun checkBluetoothPermissions(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun appendData(text: String) {
         runOnUiThread {
-            if (textViewData.text.toString() == "Data will appear here") {
-                textViewData.text = "" // Clear default text on first log
-            }
-            textViewData.append("$data\n")
-            val layout = textViewData.layout
-            if (layout != null) {
-                val scrollAmount = layout.getLineTop(textViewData.lineCount) - textViewData.height
-                if (scrollAmount > 0) textViewData.scrollTo(0, scrollAmount)
-                else textViewData.scrollTo(0, 0)
-            }
+            dataTextView.append("$text\n")
         }
     }
 
@@ -508,17 +274,13 @@ class MainActivity : AppCompatActivity() {
             try {
                 bluetoothGatt?.close()
                 bluetoothGatt = null
+                appendData("Bluetooth GATT closed")
             } catch (e: SecurityException) {
-                appendData("SecurityException: Missing permissions to close GATT.")
+                appendData("SecurityException: Failed to close Bluetooth GATT")
             }
-            if (scanning) {
-                try {
-                    bluetoothLeScanner?.stopScan(scanCallback)
-                    scanning = false
-                } catch (e: SecurityException) {
-                    appendData("SecurityException: Missing permissions to stop scan.")
-                }
-            }
+        } else {
+            appendData("Missing permissions to close Bluetooth GATT")
+            bluetoothGatt = null
         }
     }
 }
