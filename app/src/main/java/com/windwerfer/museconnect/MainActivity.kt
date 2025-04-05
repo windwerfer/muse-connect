@@ -363,63 +363,56 @@ class MainActivity : AppCompatActivity() {
                 appendData("$channel: Unexpected data size (${data.size} bytes)")
             }
         }
+
+        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            appendData("Write ${characteristic.uuid}: status=$status")
+        }
+
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
+        }
     }
 
     private fun startEegStream(gatt: BluetoothGatt) {
         if (!checkBluetoothPermissions()) return
 
         try {
-            var service = gatt.getService(Constants.MUSE_SERVICE_UUID)
-            var usingLegacy = false
-
+            val service = gatt.getService(Constants.MUSE_SERVICE_UUID)
             if (service == null) {
-                appendData("Muse service (${Constants.MUSE_SERVICE_UUID}) not found. Trying legacy service.")
-                // Fallback to legacy service
-                service = gatt.getService(Constants.MUSE_SERVICE_UUID_LEGACY)
-                usingLegacy = true
-                if (service == null) {
-                    appendData("Legacy Muse service (${Constants.MUSE_SERVICE_UUID_LEGACY}) not found either.")
-                    return
-                } else {
-                    appendData("Legacy Muse service found: ${Constants.MUSE_SERVICE_UUID_LEGACY}")
-                }
-            } else {
-                appendData("Muse service found: ${Constants.MUSE_SERVICE_UUID}")
+                appendData("Muse service not found.")
+                return
+            }
+            appendData("Muse service found: ${Constants.MUSE_SERVICE_UUID}")
+
+            // Log characteristic properties
+            service.characteristics.forEach { char ->
+                val properties = char.properties
+                appendData("Characteristic ${char.uuid}: properties=$properties (Read=${properties and BluetoothGattCharacteristic.PROPERTY_READ != 0}, Notify=${properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0})")
             }
 
-            // Set preset and start streaming
             val controlChar = service.getCharacteristic(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
             controlChar?.let {
-                it.value = Constants.MUSE_PRESET_P51
-                Thread.sleep(200) // Wait 100ms
-                gatt.writeCharacteristic(it)
-                Thread.sleep(200) // Wait 100ms
-                it.value = Constants.MUSE_START_STREAM
-                gatt.writeCharacteristic(it)
-                Thread.sleep(200) // Wait 100ms
-                appendData("Sent preset 'p51' and start command 'd'")
-            } ?: appendData("Control characteristic not found.")
+                it.value = byteArrayOf(0x03, 0x70, 0x32, 0x31, 0x0a) // "p21\n" (EEG-only)
+                if (gatt.writeCharacteristic(it)) appendData("Wrote preset 'p21'")
+                else appendData("Failed to write preset 'p21'")
+                Thread.sleep(100)
+                it.value = byteArrayOf(0x02, 0x64, 0x0a) // "d\n"
+                if (gatt.writeCharacteristic(it)) appendData("Wrote start command 'd'")
+                else appendData("Failed to write start command 'd'")
+                Thread.sleep(100)
+                it.value = byteArrayOf(0x02, 0x73, 0x0a) // "s\n"
+                if (gatt.writeCharacteristic(it)) appendData("Wrote status request 's'")
+                else appendData("Failed to write status request 's'")
 
-            // Subscribe to EEG channels
-            listOf(
-                Constants.MUSE_GATT_ATTR_TP9,
-                Constants.MUSE_GATT_ATTR_AF7,
-                Constants.MUSE_GATT_ATTR_AF8,
-                Constants.MUSE_GATT_ATTR_TP10
-            ).forEach { uuid ->
-                val char = service.getCharacteristic(uuid)
-                char?.let {
-                    gatt.setCharacteristicNotification(it, true)
+                // Subscribe to control for status response
+                if (gatt.setCharacteristicNotification(it, true)) {
                     val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
                     descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    gatt.writeDescriptor(descriptor)
-                    appendData("Subscribed to EEG channel: $uuid")
-                } ?: appendData("EEG characteristic $uuid not found.")
-            }
+                    if (gatt.writeDescriptor(descriptor)) appendData("Subscribed to control channel")
+                    else appendData("Failed to subscribe to control channel")
+                }
+            } ?: appendData("Control characteristic not found.")
 
-
-            Thread.sleep(200) // Wait 100ms
-            // After subscribing, try reading each EEG characteristic
             listOf(
                 Constants.MUSE_GATT_ATTR_TP9,
                 Constants.MUSE_GATT_ATTR_AF7,
@@ -428,16 +421,19 @@ class MainActivity : AppCompatActivity() {
             ).forEach { uuid ->
                 val char = service.getCharacteristic(uuid)
                 char?.let {
-                    if (gatt.readCharacteristic(it)) {
-                        appendData("Requested read for $uuid")
+                    if (gatt.setCharacteristicNotification(it, true)) {
+                        appendData("Enabled notification for $uuid")
+                        val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                        descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        if (gatt.writeDescriptor(descriptor)) appendData("Subscribed to EEG channel: $uuid")
+                        else appendData("Failed to subscribe to $uuid")
                     } else {
-                        appendData("Failed to request read for $uuid")
+                        appendData("Failed to enable notification for $uuid")
                     }
-                }
+                } ?: appendData("EEG characteristic $uuid not found.")
             }
-
         } catch (e: SecurityException) {
-            appendData("SecurityException: Missing permissions for characteristic operations.")
+            appendData("SecurityException: Missing permissions.")
         }
     }
 
