@@ -335,6 +335,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     appendData("Read: $data")
                 }
+            } else {
+                appendData("Read failed for ${characteristic.uuid}: status $status")
             }
         }
 
@@ -389,10 +391,12 @@ class MainActivity : AppCompatActivity() {
             val controlChar = service.getCharacteristic(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
             controlChar?.let {
                 it.value = Constants.MUSE_PRESET_P51
+                Thread.sleep(200) // Wait 100ms
                 gatt.writeCharacteristic(it)
-                Thread.sleep(100) // Wait 100ms
+                Thread.sleep(200) // Wait 100ms
                 it.value = Constants.MUSE_START_STREAM
                 gatt.writeCharacteristic(it)
+                Thread.sleep(200) // Wait 100ms
                 appendData("Sent preset 'p51' and start command 'd'")
             } ?: appendData("Control characteristic not found.")
 
@@ -412,6 +416,26 @@ class MainActivity : AppCompatActivity() {
                     appendData("Subscribed to EEG channel: $uuid")
                 } ?: appendData("EEG characteristic $uuid not found.")
             }
+
+
+            Thread.sleep(200) // Wait 100ms
+            // After subscribing, try reading each EEG characteristic
+            listOf(
+                Constants.MUSE_GATT_ATTR_TP9,
+                Constants.MUSE_GATT_ATTR_AF7,
+                Constants.MUSE_GATT_ATTR_AF8,
+                Constants.MUSE_GATT_ATTR_TP10
+            ).forEach { uuid ->
+                val char = service.getCharacteristic(uuid)
+                char?.let {
+                    if (gatt.readCharacteristic(it)) {
+                        appendData("Requested read for $uuid")
+                    } else {
+                        appendData("Failed to request read for $uuid")
+                    }
+                }
+            }
+
         } catch (e: SecurityException) {
             appendData("SecurityException: Missing permissions for characteristic operations.")
         }

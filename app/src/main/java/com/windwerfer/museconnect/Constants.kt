@@ -10,7 +10,9 @@ object Constants {
 
     // Muse BLE Commands
     val MUSE_PRESET_P51 = byteArrayOf(0x03, 0x70, 0x35, 0x31, 0x0a) // "p51\n" (EEG + PPG)
+    val MUSE_PRESET_P21 = byteArrayOf(0x03, 0x70, 0x32, 0x31, 0x0a) // "p21\n" (EEG + PPG)
     val MUSE_START_STREAM = byteArrayOf(0x02, 0x64, 0x0a) // "d\n" (start streaming)
+    val MUSE_STATUS_REQUEST = byteArrayOf(0x02, 0x73, 0x0a) // "s\n"
 
     // Muse BLE UUIDs
     val MUSE_SERVICE_UUID = UUID.fromString("0000fe8d-0000-1000-8000-00805f9b34fb") // Primary service for Muse S
