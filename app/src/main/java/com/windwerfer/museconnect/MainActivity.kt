@@ -28,6 +28,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.util.UUID
 
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothAdapter
+
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var bluetoothAdapter: BluetoothAdapter
@@ -270,36 +274,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val gattCallback = object : BluetoothGattCallback() {
+    private var gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            appendData("Connection state: status=$status, newState=$newState")
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Connected to device", Toast.LENGTH_SHORT).show()
-                        try {
-                            appendData("Connected to ${gatt.device.name}")
-                        } catch (e: SecurityException) {
-                            appendData("SecurityException: Cannot access device name.")
-                        }
-                    }
                     if (checkBluetoothPermissions()) {
                         try {
-                            gatt.discoverServices()
+                            appendData("Connected to ${gatt.device.name}")
+                            if (gatt.discoverServices()) {
+                                appendData("Service discovery initiated")
+                            } else {
+                                appendData("Failed to initiate service discovery")
+                            }
                         } catch (e: SecurityException) {
-                            appendData("SecurityException: Missing permissions for service discovery.")
+                            appendData("SecurityException: Cannot access device name or discover services")
                         }
+                    } else {
+                        appendData("Missing Bluetooth permissions for connection handling")
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Disconnected from device", Toast.LENGTH_SHORT).show()
+                    if (checkBluetoothPermissions()) {
                         try {
                             appendData("Disconnected from ${gatt.device.name}")
                         } catch (e: SecurityException) {
-                            appendData("SecurityException: Cannot access device name.")
+                            appendData("SecurityException: Cannot access device name")
                         }
+                    } else {
+                        appendData("Disconnected (permissions missing)")
                     }
-                    bluetoothGatt = null
                 }
             }
         }
@@ -307,69 +311,130 @@ class MainActivity : AppCompatActivity() {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 appendData("Services discovered.")
-                // Log all available services for debugging
-                val services = gatt.services
-                services.forEach { service ->
-                    val uuid = service.uuid.toString()
-                    appendData("Found service: $uuid")
-                    Log.d("xxx gatt", "Service UUID: $uuid")
-                }
                 if (checkBluetoothPermissions()) {
-                    startEegStream(gatt)
-                }
-            } else {
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Service discovery failed: $status", Toast.LENGTH_SHORT).show()
-                    appendData("Service discovery failed: $status")
+                    try {
+                        gatt.services.forEach { service ->
+                            appendData("Found service: ${service.uuid}")
+                        }
+                        startEegStream(gatt)
+                    } catch (e: SecurityException) {
+                        appendData("SecurityException: Cannot access services")
+                    }
+                } else {
+                    appendData("Missing permissions for service discovery")
                 }
             }
         }
 
-        override fun onCharacteristicRead(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            status: Int
-        ) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val data = characteristic.value?.toString(Charsets.UTF_8) ?: "null"
-                runOnUiThread {
-                    appendData("Read: $data")
+        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            appendData("Write ${characteristic.uuid}: status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
+                val currentValue = characteristic.value.joinToString(", ") { it.toInt().toString() }
+                when (currentValue) {
+                    "3, 112, 50, 49, 10" -> { // "p21\n"
+                        if (checkBluetoothPermissions()) {
+                            try {
+                                characteristic.value = byteArrayOf(0x02, 0x64, 0x0a) // "d\n"
+                                val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    gatt.writeCharacteristic(characteristic, characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    if (gatt.writeCharacteristic(characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                                }
+                                appendData("Initiated write for 'd': result=$writeResult")
+                            } catch (e: SecurityException) {
+                                appendData("SecurityException: Failed to write 'd'")
+                            }
+                        } else {
+                            appendData("Missing permissions to write 'd'")
+                        }
+                    }
+                    "2, 100, 10" -> { // "d\n"
+                        if (checkBluetoothPermissions()) {
+                            try {
+                                val service = gatt.getService(Constants.MUSE_SERVICE_UUID)
+                                subscribeToEegChannels(gatt, service)
+                            } catch (e: SecurityException) {
+                                appendData("SecurityException: Failed to access service for subscriptions")
+                            }
+                        } else {
+                            appendData("Missing permissions for EEG subscriptions")
+                        }
+                    }
                 }
-            } else {
-                appendData("Read failed for ${characteristic.uuid}: status $status")
             }
+        }
+
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val data = characteristic.value
             val channel = when (characteristic.uuid) {
+                Constants.MUSE_GATT_ATTR_STREAM_TOGGLE -> "Control"
                 Constants.MUSE_GATT_ATTR_TP9 -> "TP9"
                 Constants.MUSE_GATT_ATTR_AF7 -> "AF7"
                 Constants.MUSE_GATT_ATTR_AF8 -> "AF8"
                 Constants.MUSE_GATT_ATTR_TP10 -> "TP10"
                 else -> "Unknown"
             }
-            // Log raw data for debugging
-            Log.d("xxx eeg", "Raw data for $channel: ${data.joinToString(", ") { it.toInt().toString() }}")
-            appendData("Received data for $channel: ${data.size} bytes") // Confirm data arrival
+            appendData("Data for $channel: ${data.size} bytes - ${data.joinToString(", ") { it.toInt().toString() }}")
+        }
+    }
 
-            if (data.size >= 26) { // 2 bytes timestamp + 12 * 2 bytes samples
-                val timestamp = (data[0].toInt() shl 8) or data[1].toInt()
-                val samples = (2 until data.size step 2).map { i ->
-                    ((data[i].toInt() shl 8) or data[i + 1].toInt()).toDouble() / 1000.0 // Scale to uV
+    private fun subscribeToEegChannels(gatt: BluetoothGatt, service: BluetoothGattService) {
+        if (!checkBluetoothPermissions()) {
+            appendData("Missing Bluetooth permissions for EEG subscriptions")
+            return
+        }
+
+        val channels = listOf(
+            Constants.MUSE_GATT_ATTR_TP9,
+            Constants.MUSE_GATT_ATTR_AF7,
+            Constants.MUSE_GATT_ATTR_AF8,
+            Constants.MUSE_GATT_ATTR_TP10
+        )
+        var currentIndex = 0
+
+        fun subscribeNext() {
+            if (currentIndex >= channels.size) return
+            val uuid = channels[currentIndex]
+            val char = service.getCharacteristic(uuid)
+            char?.let {
+                try {
+                    if (gatt.setCharacteristicNotification(it, true)) {
+                        appendData("Enabled notification for $uuid")
+                        val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                        descriptor?.let { desc ->
+                            desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            if (gatt.writeDescriptor(desc)) {
+                                appendData("Initiated subscription for $uuid")
+                            } else {
+                                appendData("Failed to initiate subscription for $uuid")
+                            }
+                        } ?: appendData("Descriptor not found for $uuid")
+                    } else {
+                        appendData("Failed to enable notification for $uuid")
+                    }
+                } catch (e: SecurityException) {
+                    appendData("SecurityException: Failed to subscribe to $uuid")
                 }
-                appendData("$channel (t=$timestamp): ${samples.joinToString(", ")}")
-            } else {
-                appendData("$channel: Unexpected data size (${data.size} bytes)")
+            } ?: appendData("EEG characteristic $uuid not found.")
+        }
+
+        subscribeNext() // Start with the first channel
+
+        // Update gattCallback to handle chaining
+        this@MainActivity.gattCallback = object : BluetoothGattCallback() {
+            // ... other overrides unchanged ...
+            override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    currentIndex++
+                    subscribeNext()
+                }
             }
-        }
-
-        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            appendData("Write ${characteristic.uuid}: status=$status")
-        }
-
-        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
         }
     }
 
@@ -384,7 +449,6 @@ class MainActivity : AppCompatActivity() {
             }
             appendData("Muse service found: ${Constants.MUSE_SERVICE_UUID}")
 
-            // Log characteristic properties
             service.characteristics.forEach { char ->
                 val properties = char.properties
                 appendData("Characteristic ${char.uuid}: properties=$properties (Read=${properties and BluetoothGattCharacteristic.PROPERTY_READ != 0}, Notify=${properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0})")
@@ -392,46 +456,16 @@ class MainActivity : AppCompatActivity() {
 
             val controlChar = service.getCharacteristic(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
             controlChar?.let {
-                it.value = byteArrayOf(0x03, 0x70, 0x32, 0x31, 0x0a) // "p21\n" (EEG-only)
-                if (gatt.writeCharacteristic(it)) appendData("Wrote preset 'p21'")
-                else appendData("Failed to write preset 'p21'")
-                Thread.sleep(100)
-                it.value = byteArrayOf(0x02, 0x64, 0x0a) // "d\n"
-                if (gatt.writeCharacteristic(it)) appendData("Wrote start command 'd'")
-                else appendData("Failed to write start command 'd'")
-                Thread.sleep(100)
-                it.value = byteArrayOf(0x02, 0x73, 0x0a) // "s\n"
-                if (gatt.writeCharacteristic(it)) appendData("Wrote status request 's'")
-                else appendData("Failed to write status request 's'")
-
-                // Subscribe to control for status response
-                if (gatt.setCharacteristicNotification(it, true)) {
-                    val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-                    descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    if (gatt.writeDescriptor(descriptor)) appendData("Subscribed to control channel")
-                    else appendData("Failed to subscribe to control channel")
+                it.value = byteArrayOf(0x03, 0x70, 0x32, 0x31, 0x0a) // "p21\n"
+                val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeCharacteristic(it, it.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                } else {
+                    @Suppress("DEPRECATION")
+                    if (gatt.writeCharacteristic(it)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
                 }
+                appendData("Initiated write for 'p21': result=$writeResult")
+                // Next steps (d, subscriptions) moved to onCharacteristicWrite
             } ?: appendData("Control characteristic not found.")
-
-            listOf(
-                Constants.MUSE_GATT_ATTR_TP9,
-                Constants.MUSE_GATT_ATTR_AF7,
-                Constants.MUSE_GATT_ATTR_AF8,
-                Constants.MUSE_GATT_ATTR_TP10
-            ).forEach { uuid ->
-                val char = service.getCharacteristic(uuid)
-                char?.let {
-                    if (gatt.setCharacteristicNotification(it, true)) {
-                        appendData("Enabled notification for $uuid")
-                        val descriptor = it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-                        descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        if (gatt.writeDescriptor(descriptor)) appendData("Subscribed to EEG channel: $uuid")
-                        else appendData("Failed to subscribe to $uuid")
-                    } else {
-                        appendData("Failed to enable notification for $uuid")
-                    }
-                } ?: appendData("EEG characteristic $uuid not found.")
-            }
         } catch (e: SecurityException) {
             appendData("SecurityException: Missing permissions.")
         }
