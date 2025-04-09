@@ -18,8 +18,11 @@ import androidx.core.content.ContextCompat
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
+
     private var bluetoothGatt: BluetoothGatt? = null
     private lateinit var dataTextView: TextView
+    private var lastCommand: String? = null // Track the last command sent
+
 
     // Subscription chaining state
     private var currentSubscriptionIndex = 0
@@ -70,12 +73,13 @@ class MainActivity : AppCompatActivity() {
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             appendData("Write ${characteristic.uuid}: status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
-                val currentValue = characteristic.value.joinToString(", ") { it.toInt().toString() }
-                when (currentValue) {
-                    "4, 112, 50, 49, 10" -> { // "p21\n"
+                appendData("Last command sent: $lastCommand")
+                when (lastCommand) {
+                    "p21" -> {
                         if (checkBluetoothPermissions()) {
                             try {
                                 characteristic.value = byteArrayOf(0x02, 0x64, 0x0a) // "d\n"
+                                lastCommand = "d"
                                 val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                     gatt.writeCharacteristic(characteristic, characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                                 } else {
@@ -84,17 +88,25 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 appendData("Initiated write for 'd': result=$writeResult")
                             } catch (e: SecurityException) {
-                                appendData("SecurityException: Failed to write 'd'")
+                                appendData("SecurityException: Failed to write 'd': ${e.message}")
                             }
+                        } else {
+                            appendData("Missing permissions to write 'd'")
                         }
                     }
-                    "2, 100, 10" -> { // "d\n"
+                    "d" -> {
                         if (checkBluetoothPermissions()) {
                             try {
+                                appendData("Attempting to subscribe to EEG channels")
                                 val service = gatt.getService(Constants.MUSE_SERVICE_UUID)
-                                subscribeToEegChannels(gatt, service)
-                                // Write status command after starting stream
+                                if (service == null) {
+                                    appendData("Service not found for EEG subscriptions")
+                                } else {
+                                    appendData("Service found for EEG subscriptions: ${service.uuid}")
+                                    subscribeToEegChannels(gatt, service)
+                                }
                                 characteristic.value = byteArrayOf(0x02, 0x73, 0x0a) // "s\n"
+                                lastCommand = "s"
                                 val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                     gatt.writeCharacteristic(characteristic, characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                                 } else {
@@ -103,11 +115,13 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 appendData("Initiated write for 's': result=$writeResult")
                             } catch (e: SecurityException) {
-                                appendData("SecurityException: Failed to access service or write 's'")
+                                appendData("SecurityException: Failed to access service or write 's': ${e.message}")
                             }
+                        } else {
+                            appendData("Missing permissions to access service or write 's'")
                         }
                     }
-                    "2, 115, 10" -> { // "s\n"
+                    "s" -> {
                         appendData("Status command acknowledged")
                     }
                 }
@@ -118,15 +132,23 @@ class MainActivity : AppCompatActivity() {
             appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (descriptor.characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
-                    // Write p21 after control subscription
-                    descriptor.characteristic.value = byteArrayOf(0x04, 0x70, 0x32, 0x31, 0x0a) // "p21\n"
-                    val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        gatt.writeCharacteristic(descriptor.characteristic, descriptor.characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                    if (checkBluetoothPermissions()) {
+                        try {
+                            descriptor.characteristic.value = byteArrayOf(0x04, 0x70, 0x32, 0x31, 0x0a) // "p21\n"
+                            lastCommand = "p21"
+                            val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                gatt.writeCharacteristic(descriptor.characteristic, descriptor.characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                if (gatt.writeCharacteristic(descriptor.characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                            }
+                            appendData("Initiated write for 'p21': result=$writeResult")
+                        } catch (e: SecurityException) {
+                            appendData("SecurityException: Failed to write 'p21': ${e.message}")
+                        }
                     } else {
-                        @Suppress("DEPRECATION")
-                        if (gatt.writeCharacteristic(descriptor.characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                        appendData("Missing permissions to write 'p21'")
                     }
-                    appendData("Initiated write for 'p21': result=$writeResult")
                 } else {
                     currentSubscriptionIndex++
                     subscribeNextChannel()
@@ -154,6 +176,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         dataTextView = findViewById(R.id.dataTextView)
 
+        // Request permissions at runtime
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN), 1)
+        }
+
         val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
         val device = bluetoothAdapter?.getRemoteDevice("00:55:DA:B9:59:09") // MuseS-5909 MAC
         device?.let {
@@ -171,7 +198,6 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             appendData("Missing Bluetooth permissions for connection")
-            // Request permissions here if needed
         }
     }
 
@@ -188,7 +214,7 @@ class MainActivity : AppCompatActivity() {
 
             service.characteristics.forEach { char ->
                 val properties = char.properties
-                appendData("Characteristic ${char.uuid}: properties=$properties (Read=${properties and BluetoothGattCharacteristic.PROPERTY_READ != 0}, Notify=${properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0})")
+               // appendData("Characteristic ${char.uuid}: properties=$properties (Read=${properties and BluetoothGattCharacteristic.PROPERTY_READ != 0}, Notify=${properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0})")
             }
 
             val controlChar = service.getCharacteristic(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
@@ -207,7 +233,6 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     appendData("Failed to enable notification for control ${it.uuid}")
                 }
-                // Move p21 write to onDescriptorWrite
             } ?: appendData("Control characteristic not found.")
         } catch (e: SecurityException) {
             appendData("SecurityException: Missing permissions.")

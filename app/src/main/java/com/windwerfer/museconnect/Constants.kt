@@ -9,15 +9,18 @@ object Constants {
     const val SCAN_PERIOD: Long = 10000 // Scan for 10 seconds
 
     // Muse BLE Commands
-    val MUSE_PRESET_P51 = byteArrayOf(0x03, 0x70, 0x35, 0x31, 0x0a) // "p51\n" (EEG + PPG)
-    val MUSE_PRESET_P21 = byteArrayOf(0x03, 0x70, 0x32, 0x31, 0x0a) // "p21\n" (EEG + PPG)
+    //   first char (eg. 0x04) is the length byte -> including the \n the command sends (eg. 0x04=4char, 0x02=2char)
+    val MUSE_PRESET_P51 = byteArrayOf(0x04, 0x70, 0x35, 0x31, 0x0a) // "p51\n" (EEG + PPG)
+    val MUSE_PRESET_P21 = byteArrayOf(0x04, 0x70, 0x32, 0x31, 0x0a) // "p21\n" (EEG + PPG)
     val MUSE_START_STREAM = byteArrayOf(0x02, 0x64, 0x0a) // "d\n" (start streaming)
     val MUSE_STATUS_REQUEST = byteArrayOf(0x02, 0x73, 0x0a) // "s\n"
 
     // Muse BLE UUIDs
     val MUSE_SERVICE_UUID = UUID.fromString("0000fe8d-0000-1000-8000-00805f9b34fb") // Primary service for Muse S
     val MUSE_SERVICE_UUID_LEGACY = UUID.fromString("273e0000-4c4d-454d-96be-f03bac821358") // Legacy service for older Muse models
-    val MUSE_GATT_ATTR_STREAM_TOGGLE = UUID.fromString("273e0001-4c4d-454d-96be-f03bac821358")
+    val MUSE_GATT_ATTR_STREAM_TOGGLE = UUID.fromString("273e0001-4c4d-454d-96be-f03bac821358") // this characteristic receives the input commands (d = start / stop streaming, s = status)
+
+    // subscribeable sensors
     val MUSE_GATT_ATTR_LEFTAUX = UUID.fromString("273e0002-4c4d-454d-96be-f03bac821358")
     val MUSE_GATT_ATTR_TP9 = UUID.fromString("273e0003-4c4d-454d-96be-f03bac821358")
     val MUSE_GATT_ATTR_AF7 = UUID.fromString("273e0004-4c4d-454d-96be-f03bac821358")
