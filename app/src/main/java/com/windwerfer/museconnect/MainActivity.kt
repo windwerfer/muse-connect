@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
                 val currentValue = characteristic.value.joinToString(", ") { it.toInt().toString() }
                 when (currentValue) {
-                    "3, 112, 50, 49, 10" -> { // "p21\n"
+                    "4, 112, 50, 49, 10" -> { // "p21\n"
                         if (checkBluetoothPermissions()) {
                             try {
                                 characteristic.value = byteArrayOf(0x02, 0x64, 0x0a) // "d\n"
@@ -117,8 +117,20 @@ class MainActivity : AppCompatActivity() {
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                currentSubscriptionIndex++
-                subscribeNextChannel()
+                if (descriptor.characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
+                    // Write p21 after control subscription
+                    descriptor.characteristic.value = byteArrayOf(0x04, 0x70, 0x32, 0x31, 0x0a) // "p21\n"
+                    val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        gatt.writeCharacteristic(descriptor.characteristic, descriptor.characteristic.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        if (gatt.writeCharacteristic(descriptor.characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                    }
+                    appendData("Initiated write for 'p21': result=$writeResult")
+                } else {
+                    currentSubscriptionIndex++
+                    subscribeNextChannel()
+                }
             }
         }
 
@@ -187,20 +199,15 @@ class MainActivity : AppCompatActivity() {
                     descriptor?.let { desc ->
                         desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                         if (gatt.writeDescriptor(desc)) {
-                            appendData("Subscribed to control channel ${it.uuid}")
+                            appendData("Initiated subscription for control ${it.uuid}")
                         } else {
-                            appendData("Failed to subscribe to control ${it.uuid}")
+                            appendData("Failed to initiate subscription for control ${it.uuid}")
                         }
-                    }
-                }
-                it.value = byteArrayOf(0x03, 0x70, 0x35, 0x31, 0x0a) // "p21\n"
-                val writeResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    gatt.writeCharacteristic(it, it.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                    } ?: appendData("Descriptor not found for control ${it.uuid}")
                 } else {
-                    @Suppress("DEPRECATION")
-                    if (gatt.writeCharacteristic(it)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                    appendData("Failed to enable notification for control ${it.uuid}")
                 }
-                appendData("Initiated write for 'p21': result=$writeResult")
+                // Move p21 write to onDescriptorWrite
             } ?: appendData("Control characteristic not found.")
         } catch (e: SecurityException) {
             appendData("SecurityException: Missing permissions.")
