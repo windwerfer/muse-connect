@@ -7,7 +7,7 @@ import com.windwerfer.museconnect.data.ConfigManager
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
-import com.windwerfer.museconnect.utils.appendData
+import com.windwerfer.museconnect.utils.Logging
 
 class MuseConnectApplication : Application() {
     override fun onCreate() {
@@ -23,7 +23,7 @@ val appModule = module {
     single { BluetoothService(get()) }
     single { ConfigManager(get()) }
     single { MuseCommandManager(get(), onDataReceived = { data, channel ->
-        // Temporary: forward to appendData
-        appendData("Data for $channel: ${data.size} bytes - ${data.joinToString(", ") { it.toInt().toString() }}")
+        // Temporary: forward to Logging.appendData
+        Logging.appendData("Data for $channel: ${data.size} bytes - ${data.joinToString(", ") { it.toInt().toString() }}")
     }) }
 }

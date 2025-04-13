@@ -8,7 +8,7 @@ import android.bluetooth.BluetoothGattService
 import android.content.Context
 import android.os.Build
 import com.windwerfer.museconnect.Constants
-import com.windwerfer.museconnect.utils.appendData
+import com.windwerfer.museconnect.utils.Logging
 import com.windwerfer.museconnect.utils.checkBluetoothPermissions
 import java.util.UUID
 
@@ -28,9 +28,9 @@ class MuseCommandManager(
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
-            appendData("Write ${characteristic.uuid}: status=$status")
+            Logging.appendData("Write ${characteristic.uuid}: status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
-                appendData("Last command sent: $lastCommand")
+                Logging.appendData("Last command sent: $lastCommand")
                 when (lastCommand) {
                     "p21" -> {
                         if (checkBluetoothPermissions(context)) {
@@ -47,30 +47,30 @@ class MuseCommandManager(
                                     @Suppress("DEPRECATION")
                                     if (gatt.writeCharacteristic(characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
                                 }
-                                appendData("Initiated write for 'd': result=$writeResult")
+                                Logging.appendData("Initiated write for 'd': result=$writeResult")
                             } catch (e: SecurityException) {
-                                appendData("SecurityException: Failed to write 'd': ${e.message}")
+                                Logging.appendData("SecurityException: Failed to write 'd': ${e.message}")
                             }
                         } else {
-                            appendData("Missing permissions to write 'd'")
+                            Logging.appendData("Missing permissions to write 'd'")
                         }
                     }
                     "d" -> {
                         if (checkBluetoothPermissions(context)) {
                             try {
-                                appendData("Attempting to subscribe to EEG channels")
+                                Logging.appendData("Attempting to subscribe to EEG channels")
                                 val service = gatt.getService(Constants.MUSE_SERVICE_UUID)
                                 if (service == null) {
-                                    appendData("Service not found for EEG subscriptions")
+                                    Logging.appendData("Service not found for EEG subscriptions")
                                 } else {
-                                    appendData("Service found for EEG subscriptions: ${service.uuid}")
+                                    Logging.appendData("Service found for EEG subscriptions: ${service.uuid}")
                                     subscribeToEegChannels(gatt, service)
                                 }
                             } catch (e: SecurityException) {
-                                appendData("SecurityException: Failed to access service for subscriptions: ${e.message}")
+                                Logging.appendData("SecurityException: Failed to access service for subscriptions: ${e.message}")
                             }
                         } else {
-                            appendData("Missing permissions to access service for subscriptions")
+                            Logging.appendData("Missing permissions to access service for subscriptions")
                         }
                     }
                 }
@@ -82,7 +82,7 @@ class MuseCommandManager(
             descriptor: BluetoothGattDescriptor,
             status: Int
         ) {
-            appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
+            Logging.appendData("Descriptor write ${descriptor.characteristic.uuid}: status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (descriptor.characteristic.uuid == Constants.MUSE_GATT_ATTR_STREAM_TOGGLE) {
                     if (checkBluetoothPermissions(context)) {
@@ -100,12 +100,12 @@ class MuseCommandManager(
                                 @Suppress("DEPRECATION")
                                 if (gatt.writeCharacteristic(descriptor.characteristic)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
                             }
-                            appendData("Initiated write for 'p21': result=$writeResult")
+                            Logging.appendData("Initiated write for 'p21': result=$writeResult")
                         } catch (e: SecurityException) {
-                            appendData("SecurityException: Failed to write 'p21': ${e.message}")
+                            Logging.appendData("SecurityException: Failed to write 'p21': ${e.message}")
                         }
                     } else {
-                        appendData("Missing permissions to write 'p21'")
+                        Logging.appendData("Missing permissions to write 'p21'")
                     }
                 } else {
                     currentSubscriptionIndex++
@@ -118,7 +118,7 @@ class MuseCommandManager(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
-            appendData("onCharacteristicChanged triggered for ${characteristic.uuid}")
+            Logging.appendData("onCharacteristicChanged triggered for ${characteristic.uuid}")
             val data = characteristic.value
             val channel = when (characteristic.uuid) {
                 Constants.MUSE_GATT_ATTR_STREAM_TOGGLE -> "Control"
@@ -135,42 +135,42 @@ class MuseCommandManager(
     fun startEegStream(gatt: BluetoothGatt) {
         this.gatt = gatt
         service = gatt.getService(Constants.MUSE_SERVICE_UUID) ?: run {
-            appendData("Muse service not found")
+            Logging.appendData("Muse service not found")
             return
         }
-        appendData("Muse service found: ${Constants.MUSE_SERVICE_UUID}")
+        Logging.appendData("Muse service found: ${Constants.MUSE_SERVICE_UUID}")
 
         val controlChar = service?.getCharacteristic(Constants.MUSE_GATT_ATTR_STREAM_TOGGLE)
         controlChar?.let {
             if (checkBluetoothPermissions(context)) {
                 try {
                     if (gatt.setCharacteristicNotification(it, true)) {
-                        appendData("Enabled notification for control ${it.uuid}")
+                        Logging.appendData("Enabled notification for control ${it.uuid}")
                         val descriptor =
                             it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
                         descriptor?.let { desc ->
                             desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                             if (gatt.writeDescriptor(desc)) {
-                                appendData("Initiated subscription for control ${it.uuid}")
+                                Logging.appendData("Initiated subscription for control ${it.uuid}")
                             } else {
-                                appendData("Failed to initiate subscription for control ${it.uuid}")
+                                Logging.appendData("Failed to initiate subscription for control ${it.uuid}")
                             }
-                        } ?: appendData("Descriptor not found for control ${it.uuid}")
+                        } ?: Logging.appendData("Descriptor not found for control ${it.uuid}")
                     } else {
-                        appendData("Failed to enable notification for control ${it.uuid}")
+                        Logging.appendData("Failed to enable notification for control ${it.uuid}")
                     }
                 } catch (e: SecurityException) {
-                    appendData("SecurityException: Failed to subscribe to control: ${e.message}")
+                    Logging.appendData("SecurityException: Failed to subscribe to control: ${e.message}")
                 }
             } else {
-                appendData("Missing permissions to subscribe to control")
+                Logging.appendData("Missing permissions to subscribe to control")
             }
-        } ?: appendData("Control characteristic not found")
+        } ?: Logging.appendData("Control characteristic not found")
     }
 
     private fun subscribeToEegChannels(gatt: BluetoothGatt, service: BluetoothGattService) {
         if (!checkBluetoothPermissions(context)) {
-            appendData("Missing Bluetooth permissions for EEG subscriptions")
+            Logging.appendData("Missing Bluetooth permissions for EEG subscriptions")
             return
         }
         eegChannels = listOf(
@@ -195,26 +195,26 @@ class MuseCommandManager(
             if (checkBluetoothPermissions(context)) {
                 try {
                     if (gatt.setCharacteristicNotification(it, true)) {
-                        appendData("Enabled notification for $uuid")
+                        Logging.appendData("Enabled notification for $uuid")
                         val descriptor =
                             it.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
                         descriptor?.let { desc ->
                             desc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                             if (gatt.writeDescriptor(desc)) {
-                                appendData("Initiated subscription for $uuid")
+                                Logging.appendData("Initiated subscription for $uuid")
                             } else {
-                                appendData("Failed to initiate subscription for $uuid")
+                                Logging.appendData("Failed to initiate subscription for $uuid")
                             }
-                        } ?: appendData("Descriptor not found for $uuid")
+                        } ?: Logging.appendData("Descriptor not found for $uuid")
                     } else {
-                        appendData("Failed to enable notification for $uuid")
+                        Logging.appendData("Failed to enable notification for $uuid")
                     }
                 } catch (e: SecurityException) {
-                    appendData("SecurityException: Failed to subscribe to $uuid: ${e.message}")
+                    Logging.appendData("SecurityException: Failed to subscribe to $uuid: ${e.message}")
                 }
             } else {
-                appendData("Missing permissions to subscribe to $uuid")
+                Logging.appendData("Missing permissions to subscribe to $uuid")
             }
-        } ?: appendData("EEG characteristic $uuid not found")
+        } ?: Logging.appendData("EEG characteristic $uuid not found")
     }
 }
