@@ -1,13 +1,26 @@
 package com.windwerfer.museconnect.ui
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.windwerfer.museconnect.data.ConfigManager
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun MainScreen(
@@ -105,12 +118,13 @@ fun Spinner(
             onDismissRequest = { expanded = false }
         ) {
             items.forEach { item ->
-                DropdownMenuItem(onClick = {
-                    onItemSelected(item)
-                    expanded = false
-                }) {
-                    Text(item)
-                }
+                DropdownMenuItem(
+                    text = { Text(item) },
+                    onClick = {
+                        onItemSelected(item)
+                        expanded = false
+                    }
+                )
             }
         }
     }
@@ -132,7 +146,7 @@ fun CheckboxWithAccordion(
             Text(
                 text = value,
                 modifier = Modifier.padding(start = 32.dp, top = 4.dp),
-                style = MaterialTheme.typography.body2
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
